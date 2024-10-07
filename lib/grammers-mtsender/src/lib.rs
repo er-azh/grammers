@@ -702,7 +702,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                     );
                 }
                 RequestState::Sent(pair)
-                    if pair.msg_id == bad_msg.msg_id || pair.container_msg_id == bad_msg.msg_id =>
+                    if pair.msg_id >= bad_msg.msg_id || pair.container_msg_id >= bad_msg.msg_id =>
                 {
                     // TODO add a test to make sure we resend the request
                     if bad_msg.retryable() {

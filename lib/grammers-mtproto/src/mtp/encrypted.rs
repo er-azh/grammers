@@ -644,15 +644,17 @@ impl Encrypted {
             .salt_request_msg_id
             .is_some_and(|msg_id| msg_id == MsgId(bad_msg.bad_msg_id()))
         {
-            // Response to internal request, do not propagate.
+            // Response to internal request, but we still need to propagate it
+            // so that the user can check to see if they had any pending messages
+            // with a higher `msg_id`.
             self.salt_request_msg_id = None;
-        } else {
-            self.deserialization
-                .push(Deserialization::BadMessage(super::BadMessage {
-                    msg_id: MsgId(bad_msg.bad_msg_id()),
-                    code: bad_msg.error_code(),
-                }));
         }
+
+        self.deserialization
+            .push(Deserialization::BadMessage(super::BadMessage {
+                msg_id: MsgId(bad_msg.bad_msg_id()),
+                code: bad_msg.error_code(),
+            }));
 
         let bad_msg = match bad_msg {
             tl::enums::BadMsgNotification::Notification(x) => x,
