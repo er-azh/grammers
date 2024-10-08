@@ -113,6 +113,8 @@ impl Mtp for Plain {
     }
 
     fn reset(&mut self) {}
+
+    fn reproduce_deadlock_bug(&mut self) {}
 }
 
 #[cfg(test)]

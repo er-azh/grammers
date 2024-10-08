@@ -206,4 +206,7 @@ pub trait Mtp {
 
     /// Reset the state, as if a new instance was just created.
     fn reset(&mut self);
+
+    /// temporary function to reproduce a bug
+    fn reproduce_deadlock_bug(&mut self);
 }

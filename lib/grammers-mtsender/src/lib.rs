@@ -20,7 +20,7 @@ use grammers_mtproto::mtp::{
 };
 use grammers_mtproto::transport::{self, Transport};
 use grammers_mtproto::{authentication, MsgId};
-use grammers_tl_types::{self as tl, Deserializable, RemoteCall};
+use grammers_tl_types::{self as tl, Deserializable, Identifiable, RemoteCall};
 use log::{debug, error, info, trace, warn};
 use std::io;
 use std::io::Error;
@@ -251,6 +251,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         ))
     }
 
+    pub fn reproduce_deadlock_bug(&mut self) {
+        self.mtp.reproduce_deadlock_bug();
+    }
+
     pub async fn invoke<R: RemoteCall>(&mut self, request: &R) -> Result<Vec<u8>, InvocationError> {
         let rx = self.enqueue_body(request.to_bytes());
         self.step_until_receive(rx).await
@@ -317,9 +321,27 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         );
 
         let (mut reader, mut writer) = self.stream.split();
+        let mut should_reproduce_deadlock_bug = false;
         let sel = {
             let sleep = pin!(async { sleep_until(self.next_ping).await });
-            let recv_req = pin!(async { self.request_rx.recv().await });
+            let recv_req = pin!(async {
+                let req = self.request_rx.recv().await;
+
+                if let Some(req) = &req {
+                    let constructor_id =
+                        u32::from_le_bytes([req.body[0], req.body[1], req.body[2], req.body[3]]);
+                    trace!(
+                        "received request to send: {}",
+                        tl::name_for_id(constructor_id)
+                    );
+                    if constructor_id == tl::functions::users::GetUsers::CONSTRUCTOR_ID {
+                        should_reproduce_deadlock_bug = true;
+                    }
+                }
+
+                req
+            });
+
             let recv_data =
                 pin!(async { reader.read(&mut self.read_buffer[self.read_tail..]).await });
             let send_data = pin!(async {
@@ -340,6 +362,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
         let res = match sel {
             Sel::Request(request) => {
+                if should_reproduce_deadlock_bug {
+                    info!("reproducing deadlock bug");
+                    self.reproduce_deadlock_bug();
+                }
                 self.requests.push(request.unwrap());
                 Ok(Vec::new())
             }

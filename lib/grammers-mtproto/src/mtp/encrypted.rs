@@ -1262,6 +1262,13 @@ impl Mtp for Encrypted {
         Some(self.serialize_msg(buffer, body, true))
     }
 
+    fn reproduce_deadlock_bug(&mut self) {
+        info!("setting all salts to 0");
+        self.salts.iter_mut().for_each(|salt| {
+            salt.salt = 0;
+        });
+    }
+
     fn finalize(&mut self, buffer: &mut DequeBuffer<u8>) -> Option<MsgId> {
         self.finalize_plain(buffer);
         if buffer.is_empty() {
