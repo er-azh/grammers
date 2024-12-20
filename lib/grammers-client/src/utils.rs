@@ -10,8 +10,8 @@ use crate::types;
 use chrono::{DateTime, Utc};
 use grammers_session::{PackedChat, PackedType};
 use grammers_tl_types as tl;
+use instant::SystemTime;
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::SystemTime;
 
 // This atomic isn't for anything critical, just to generate unique IDs without locks.
 // The worst that can happen if the load and store orderings are wrong is that the IDs

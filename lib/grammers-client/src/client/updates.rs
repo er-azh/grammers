@@ -15,10 +15,34 @@ pub use grammers_mtsender::{AuthorizationError, InvocationError};
 use grammers_session::channel_id;
 pub use grammers_session::{PrematureEndReason, UpdateState};
 use grammers_tl_types as tl;
+use instant::Instant;
 use std::pin::pin;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::time::sleep_until;
+use std::time::Duration;
+
+async fn sleep_until(instant: Instant) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use tokio::time::sleep_until;
+        return sleep_until(instant.into()).await;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let millis = (instant - Instant::now()).as_millis() as u32;
+        let mut cb = |resolve: js_sys::Function, _reject: js_sys::Function| {
+            web_sys::window()
+                .unwrap()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(
+                    &resolve,
+                    millis.try_into().unwrap(),
+                )
+                .unwrap();
+        };
+        let p = js_sys::Promise::new(&mut cb);
+        wasm_bindgen_futures::JsFuture::from(p).await.unwrap();
+    }
+}
 
 /// How long to wait after warning the user that the updates limit was exceeded.
 const UPDATE_LIMIT_EXCEEDED_LOG_COOLDOWN: Duration = Duration::from_secs(300);

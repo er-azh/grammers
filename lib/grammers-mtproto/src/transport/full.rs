@@ -124,6 +124,12 @@ impl Transport for Full {
         self.recv_seq = 0;
         self.send_seq = 0;
     }
+
+    fn obfuscated_tag(&mut self) -> &[u8; 4] {
+        unreachable!("full transport cannot be tagged");
+    }
+
+    fn deobfuscate(&mut self, _buffer: &mut [u8]) {}
 }
 
 #[cfg(test)]

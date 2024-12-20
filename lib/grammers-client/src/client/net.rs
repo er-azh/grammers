@@ -16,7 +16,7 @@ use grammers_tl_types::{self as tl, Deserializable};
 use log::{debug, info};
 use sender::Enqueuer;
 use std::collections::{HashMap, VecDeque};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::oneshot::error::TryRecvError;
@@ -36,19 +36,41 @@ const DC_ADDRESSES: [(Ipv4Addr, u16); 6] = [
     (Ipv4Addr::new(91, 108, 56, 190), 443),
 ];
 
+#[allow(dead_code)]
+const WS_ADDRESSES: [&str; 6] = [
+    "",
+    "wss://pluto.web.telegram.org/apiws",
+    "wss://zws2.web.telegram.org/apiws",
+    "wss://aurora.web.telegram.org/apiws",
+    "wss://vesta.web.telegram.org/apiws",
+    "wss://flora.web.telegram.org/apiws",
+];
+
 const DEFAULT_DC: i32 = 2;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type PlatformTransport = transport::Full;
+#[cfg(target_arch = "wasm32")]
+pub(crate) type PlatformTransport = transport::Obfuscated<transport::Intermediate>;
 
 pub(crate) async fn connect_sender(
     dc_id: i32,
     config: &Config,
-) -> Result<(Sender<transport::Full, mtp::Encrypted>, Enqueuer), AuthorizationError> {
-    let transport = transport::Full::new();
+) -> Result<(Sender<PlatformTransport, mtp::Encrypted>, Enqueuer), AuthorizationError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let mtproto_transport = PlatformTransport::new();
+    #[cfg(target_arch = "wasm32")]
+    let mtproto_transport = PlatformTransport::new(transport::Intermediate::new());
 
-    let addr: SocketAddr = if let Some(ip) = config.params.server_addr {
+    #[cfg(not(target_arch = "wasm32"))]
+    let addr: std::net::SocketAddr = if let Some(ip) = config.params.server_addr {
         ip
     } else {
         DC_ADDRESSES[dc_id as usize].into()
     };
+
+    #[cfg(target_arch = "wasm32")]
+    let addr: &'static str = WS_ADDRESSES[dc_id as usize];
 
     let (mut sender, request_tx) = if let Some(auth_key) = config.session.dc_auth_key(dc_id) {
         info!(
@@ -59,7 +81,7 @@ pub(crate) async fn connect_sender(
         #[cfg(feature = "proxy")]
         if let Some(url) = config.params.proxy_url.as_ref() {
             sender::connect_via_proxy_with_auth(
-                transport,
+                mtproto_transport,
                 addr,
                 auth_key,
                 url,
@@ -67,13 +89,37 @@ pub(crate) async fn connect_sender(
             )
             .await?
         } else {
-            sender::connect_with_auth(transport, addr, auth_key, config.params.reconnection_policy)
-                .await?
+            sender::connect_with_auth(
+                mtproto_transport,
+                addr,
+                auth_key,
+                config.params.reconnection_policy,
+            )
+            .await?
         }
 
         #[cfg(not(feature = "proxy"))]
-        sender::connect_with_auth(transport, addr, auth_key, config.params.reconnection_policy)
+        #[cfg(not(target_arch = "wasm32"))]
+        let ret = sender::connect_with_auth(
+            mtproto_transport,
+            addr,
+            auth_key,
+            config.params.reconnection_policy,
+        )
+        .await?;
+
+        #[cfg(target_arch = "wasm32")]
+        let ret = {
+            sender::connect_ws_with_auth(
+                mtproto_transport,
+                addr,
+                auth_key,
+                config.params.reconnection_policy,
+            )
             .await?
+        };
+
+        ret
     } else {
         info!(
             "creating a new sender and auth key in dc {} {:?}",
@@ -82,17 +128,36 @@ pub(crate) async fn connect_sender(
 
         #[cfg(feature = "proxy")]
         let (sender, tx) = if let Some(url) = config.params.proxy_url.as_ref() {
-            sender::connect_via_proxy(transport, addr, url, config.params.reconnection_policy)
-                .await?
+            sender::connect_via_proxy(
+                mtproto_transport,
+                addr,
+                url,
+                config.params.reconnection_policy,
+            )
+            .await?
         } else {
-            sender::connect(transport, addr, config.params.reconnection_policy).await?
+            sender::connect(mtproto_transport, addr, config.params.reconnection_policy).await?
         };
 
         #[cfg(not(feature = "proxy"))]
+        #[cfg(not(target_arch = "wasm32"))]
         let (sender, tx) =
-            sender::connect(transport, addr, config.params.reconnection_policy).await?;
+            sender::connect(mtproto_transport, addr, config.params.reconnection_policy).await?;
 
+        #[cfg(target_arch = "wasm32")]
+        let (sender, tx) = {
+            sender::connect_ws(mtproto_transport, addr, config.params.reconnection_policy).await?
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
         config.session.insert_dc(dc_id, addr, sender.auth_key());
+
+        #[cfg(target_arch = "wasm32")]
+        config.session.insert_dc(
+            dc_id,
+            DC_ADDRESSES[dc_id as usize].into(),
+            sender.auth_key(),
+        );
         (sender, tx)
     };
 
@@ -363,7 +428,7 @@ impl Client {
 }
 
 impl Connection {
-    fn new(sender: Sender<transport::Full, mtp::Encrypted>, request_tx: Enqueuer) -> Self {
+    fn new(sender: Sender<PlatformTransport, mtp::Encrypted>, request_tx: Enqueuer) -> Self {
         Self {
             sender: AsyncMutex::new(sender),
             request_tx: RwLock::new(request_tx),

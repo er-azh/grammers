@@ -25,10 +25,32 @@ grammers-crypto = { path = "../grammers-crypto", version = "0.7.0" }
 grammers-mtproto = { path = "../grammers-mtproto", version = "0.7.0" }
 grammers-tl-types = { path = "../grammers-tl-types", version = "0.7.0", features = [ "tl-mtproto" ] }
 log = "0.4.22"
-tokio = { version = "1.40.0", default-features = false, features = ["net", "io-util", "sync", "time"] }
 tokio-socks = { version = "0.5.2", optional = true }
 trust-dns-resolver = { version = "0.23.2", optional = true }
 url = { version = "2.5.2", optional = true }
+instant = { version = "0.1", features = ["wasm-bindgen"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.40.0", default-features = false, features = [
+  "net",
+  "io-util",
+  "sync",
+  "time",
+] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.99"
+tokio = { version = "1.40.0", default-features = false, features = [
+  "io-util",
+  "sync",
+  "time",
+] }
+wasm-bindgen-futures = "0.4.49"
+js-sys = "0.3.76"
+web-sys = "0.3.76"
+ws_stream_wasm = { version = "0.7.4", features = ["tokio_io"] }
+async_io_stream = { version = "0.3.3", features = ["tokio_io", "tokio"] }
+
 
 [dev-dependencies]
 simple_logger = { version = "5.0.0", default-features = false, features = ["colors"] }

@@ -13,9 +13,9 @@ use crate::{manual_tl, MsgId};
 use getrandom::getrandom;
 use grammers_crypto::{decrypt_data_v2, encrypt_data_v2, AuthKey, DequeBuffer};
 use grammers_tl_types::{self as tl, Cursor, Deserializable, Identifiable, Serializable};
+use instant::{Instant, SystemTime};
 use log::info;
 use std::mem;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// How many future salts to fetch or have stored at a given time.
 ///
@@ -168,7 +168,7 @@ impl Encrypted {
     /// Correct our time offset based on a known valid message ID.
     fn correct_time_offset(&mut self, msg_id: i64) {
         let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+            .duration_since(SystemTime::UNIX_EPOCH)
             .expect("system time is before epoch")
             .as_secs() as i32;
 
@@ -180,7 +180,7 @@ impl Encrypted {
     /// time (in ms) since epoch, applying a known time offset.
     fn get_new_msg_id(&mut self) -> i64 {
         let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+            .duration_since(SystemTime::UNIX_EPOCH)
             .expect("system time is before epoch");
 
         let seconds = (now.as_secs() as i32 + self.time_offset) as u64;

@@ -82,6 +82,13 @@ impl Transport for Intermediate {
         log::info!("resetting sending of header in intermediate transport");
         self.init = false;
     }
+
+    fn obfuscated_tag(&mut self) -> &[u8; 4] {
+        self.init = true;
+        &[0xee, 0xee, 0xee, 0xee]
+    }
+
+    fn deobfuscate(&mut self, _buffer: &mut [u8]) {}
 }
 
 #[cfg(test)]

@@ -34,11 +34,12 @@ pub(crate) use defs::Entry;
 pub use defs::{Gap, MessageBox};
 use defs::{PtsInfo, State, NO_DATE, NO_PTS, NO_SEQ, POSSIBLE_GAP_TIMEOUT};
 use grammers_tl_types as tl;
+use instant::Instant;
 use log::{debug, info, trace, warn};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::mem;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tl::enums::InputChannel;
 
 fn next_updates_deadline() -> Instant {

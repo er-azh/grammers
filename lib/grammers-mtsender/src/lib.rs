@@ -21,6 +21,7 @@ use grammers_mtproto::mtp::{
 use grammers_mtproto::transport::{self, Transport};
 use grammers_mtproto::{authentication, MsgId};
 use grammers_tl_types::{self as tl, Deserializable, RemoteCall};
+use instant::{Duration, Instant};
 use log::{debug, error, info, trace, warn};
 use std::io;
 use std::io::Error;
@@ -29,13 +30,36 @@ use std::pin::pin;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::SystemTime;
 use tl::Serializable;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
-use tokio::time::{sleep_until, Duration, Instant};
+
+async fn sleep_until(instant: Instant) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use tokio::time::sleep_until;
+        return sleep_until(instant.into()).await;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let millis = (instant - Instant::now()).as_millis() as u32;
+        let mut cb = |resolve: js_sys::Function, _reject: js_sys::Function| {
+            web_sys::window()
+                .unwrap()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(
+                    &resolve,
+                    millis.try_into().unwrap(),
+                )
+                .unwrap();
+        };
+        let p = js_sys::Promise::new(&mut cb);
+        wasm_bindgen_futures::JsFuture::from(p).await.unwrap();
+    }
+}
 
 #[cfg(feature = "proxy")]
 use {
@@ -95,17 +119,42 @@ pub(crate) fn generate_random_id() -> i64 {
 }
 
 pub enum NetStream {
+    #[cfg(target_arch = "wasm32")]
+    Websocket(
+        (
+            ws_stream_wasm::WsMeta,
+            async_io_stream::IoStream<ws_stream_wasm::WsStreamIo, Vec<u8>>,
+        ),
+    ),
+    #[cfg(not(target_arch = "wasm32"))]
     Tcp(TcpStream),
     #[cfg(feature = "proxy")]
     ProxySocks5(Socks5Stream<TcpStream>),
 }
 
 impl NetStream {
-    fn split(&mut self) -> (ReadHalf, WriteHalf) {
+    pub fn split(
+        &'_ mut self,
+    ) -> (
+        Box<dyn AsyncRead + Send + Unpin + '_>,
+        Box<dyn AsyncWrite + Send + Unpin + '_>,
+    ) {
         match self {
-            Self::Tcp(stream) => stream.split(),
+            #[cfg(target_arch = "wasm32")]
+            NetStream::Websocket((_, stream)) => {
+                let (reader, writer) = tokio::io::split(stream);
+                (Box::new(reader), Box::new(writer))
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            NetStream::Tcp(stream) => {
+                let (reader, writer) = stream.split();
+                (Box::new(reader), Box::new(writer))
+            }
             #[cfg(feature = "proxy")]
-            Self::ProxySocks5(stream) => stream.split(),
+            NetStream::ProxySocks5(stream) => {
+                let (reader, writer) = stream.split();
+                (Box::new(reader), Box::new(writer))
+            }
         }
     }
 }
@@ -116,7 +165,10 @@ pub struct Sender<T: Transport, M: Mtp> {
     stream: NetStream,
     transport: T,
     mtp: M,
+    #[cfg(not(target_arch = "wasm32"))]
     addr: std::net::SocketAddr,
+    #[cfg(target_arch = "wasm32")]
+    addr: String,
     #[cfg(feature = "proxy")]
     proxy_url: Option<String>,
     requests: Vec<Request>,
@@ -127,6 +179,7 @@ pub struct Sender<T: Transport, M: Mtp> {
     // Transport-level buffers and positions
     read_buffer: Vec<u8>,
     read_tail: usize,
+    deobfuscate_tail: usize,
     write_buffer: DequeBuffer<u8>,
     write_head: usize,
 }
@@ -188,6 +241,7 @@ impl Enqueuer {
 }
 
 impl<T: Transport, M: Mtp> Sender<T, M> {
+    #[cfg(not(target_arch = "wasm32"))]
     async fn connect<'a>(
         transport: T,
         mtp: M,
@@ -211,6 +265,39 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
                 read_buffer: vec![0; MAXIMUM_DATA],
                 read_tail: 0,
+                deobfuscate_tail: 0,
+                write_buffer: DequeBuffer::with_capacity(MAXIMUM_DATA, LEADING_BUFFER_SPACE),
+                write_head: 0,
+            },
+            Enqueuer(tx),
+        ))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn connect_ws<'a>(
+        transport: T,
+        mtp: M,
+        addr: &str,
+        reconnection_policy: &'static dyn ReconnectionPolicy,
+    ) -> Result<(Self, Enqueuer), io::Error> {
+        let stream = connect_ws_stream(&addr).await?;
+        let (tx, rx) = mpsc::unbounded_channel();
+        Ok((
+            Self {
+                stream,
+                transport,
+                mtp,
+                addr: addr.to_string(),
+                #[cfg(feature = "proxy")]
+                proxy_url: None,
+                requests: vec![],
+                request_rx: rx,
+                next_ping: Instant::now() + PING_DELAY,
+                reconnection_policy,
+
+                read_buffer: vec![0; MAXIMUM_DATA],
+                read_tail: 0,
+                deobfuscate_tail: 0,
                 write_buffer: DequeBuffer::with_capacity(MAXIMUM_DATA, LEADING_BUFFER_SPACE),
                 write_head: 0,
             },
@@ -244,6 +331,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
                 read_buffer: vec![0; MAXIMUM_DATA],
                 read_tail: 0,
+                deobfuscate_tail: 0,
                 write_buffer: DequeBuffer::with_capacity(MAXIMUM_DATA, LEADING_BUFFER_SPACE),
                 write_head: 0,
             },
@@ -338,6 +426,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             }
         };
 
+        std::mem::drop(writer);
+        std::mem::drop(reader);
+
         let res = match sel {
             Sel::Request(request) => {
                 self.requests.push(request.unwrap());
@@ -372,7 +463,11 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             };
 
             #[cfg(not(feature = "proxy"))]
+            #[cfg(not(target_arch = "wasm32"))]
             let res = connect_stream(&self.addr).await;
+
+            #[cfg(target_arch = "wasm32")]
+            let res = connect_ws_stream(&self.addr).await;
 
             match res {
                 Ok(result) => {
@@ -471,6 +566,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
         // TODO the buffer might have multiple transport packets, what should happen with the
         // updates successfully read if subsequent packets fail to be deserialized properly?
+
+        self.transport
+            .deobfuscate(&mut self.read_buffer[self.deobfuscate_tail..self.read_tail]);
+        self.deobfuscate_tail = self.read_tail;
         let mut updates = Vec::new();
         let mut next_offset = 0;
         while next_offset != self.read_tail {
@@ -494,6 +593,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
         self.read_buffer.copy_within(next_offset..self.read_tail, 0);
         self.read_tail -= next_offset;
+        self.deobfuscate_tail -= next_offset;
 
         Ok(updates)
     }
@@ -554,6 +654,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             self.write_buffer.len(),
         );
         self.read_tail = 0;
+        self.deobfuscate_tail = 0;
         self.read_buffer.fill(0);
         self.write_head = 0;
         self.write_buffer.clear();
@@ -778,12 +879,24 @@ impl<T: Transport> Sender<T, mtp::Encrypted> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn connect<T: Transport>(
     transport: T,
     addr: std::net::SocketAddr,
     rc_policy: &'static dyn ReconnectionPolicy,
 ) -> Result<(Sender<T, mtp::Encrypted>, Enqueuer), AuthorizationError> {
     let (sender, enqueuer) = Sender::connect(transport, mtp::Plain::new(), addr, rc_policy).await?;
+    generate_auth_key(sender, enqueuer).await
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn connect_ws<T: Transport>(
+    transport: T,
+    addr: &str,
+    rc_policy: &'static dyn ReconnectionPolicy,
+) -> Result<(Sender<T, mtp::Encrypted>, Enqueuer), AuthorizationError> {
+    let (sender, enqueuer) =
+        Sender::connect_ws(transport, mtp::Plain::new(), addr, rc_policy).await?;
     generate_auth_key(sender, enqueuer).await
 }
 
@@ -799,9 +912,25 @@ pub async fn connect_via_proxy<'a, T: Transport>(
     generate_auth_key(sender, enqueuer).await
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn connect_stream(addr: &std::net::SocketAddr) -> Result<NetStream, std::io::Error> {
     info!("connecting...");
-    Ok(NetStream::Tcp(TcpStream::connect(addr).await?))
+    return Ok(NetStream::Tcp(TcpStream::connect(addr).await?));
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn connect_ws_stream(addr: &str) -> Result<NetStream, std::io::Error> {
+    info!("connecting...");
+    let (ws, wsio) = ws_stream_wasm::WsMeta::connect(addr, Some(["binary"].to_vec()))
+        .await
+        .map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                format!("failed to connect to websocket: {}", err),
+            )
+        })?;
+
+    Ok(NetStream::Websocket((ws, wsio.into_io())))
 }
 
 #[cfg(feature = "proxy")]
@@ -898,6 +1027,7 @@ pub async fn generate_auth_key<T: Transport>(
             next_ping: Instant::now() + PING_DELAY,
             read_buffer: sender.read_buffer,
             read_tail: sender.read_tail,
+            deobfuscate_tail: sender.deobfuscate_tail,
             write_buffer: sender.write_buffer,
             write_head: sender.write_head,
             addr: sender.addr,
@@ -909,6 +1039,7 @@ pub async fn generate_auth_key<T: Transport>(
     ))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn connect_with_auth<T: Transport>(
     transport: T,
     addr: std::net::SocketAddr,
@@ -916,6 +1047,22 @@ pub async fn connect_with_auth<T: Transport>(
     rc_policy: &'static dyn ReconnectionPolicy,
 ) -> Result<(Sender<T, mtp::Encrypted>, Enqueuer), io::Error> {
     Sender::connect(
+        transport,
+        mtp::Encrypted::build().finish(auth_key),
+        addr,
+        rc_policy,
+    )
+    .await
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn connect_ws_with_auth<T: Transport>(
+    transport: T,
+    addr: &str,
+    auth_key: [u8; 256],
+    rc_policy: &'static dyn ReconnectionPolicy,
+) -> Result<(Sender<T, mtp::Encrypted>, Enqueuer), io::Error> {
+    Sender::connect_ws(
         transport,
         mtp::Encrypted::build().finish(auth_key),
         addr,

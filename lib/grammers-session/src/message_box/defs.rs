@@ -6,8 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 use grammers_tl_types as tl;
+use instant::Instant;
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Telegram sends `seq` equal to `0` when "it doesn't matter", so we use that value too.
 pub(super) const NO_SEQ: i32 = 0;

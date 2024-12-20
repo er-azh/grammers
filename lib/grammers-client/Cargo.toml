@@ -33,6 +33,7 @@ grammers-tl-types = { path = "../grammers-tl-types", version = "0.7.0", features
     "tl-mtproto",
 ] }
 html5ever = { version = "0.29.0", optional = true }
+instant = { version = "0.1.13", features = ["wasm-bindgen"] }
 locate-locale = "0.2.0"
 log = "0.4.22"
 md5 = "0.7.0"
@@ -40,16 +41,22 @@ mime_guess = "2.0.5"
 os_info = { version = "3.8.2", default-features = false }
 pin-project-lite = "0.2"
 pulldown-cmark = { version = "0.12.1", default-features = false, optional = true }
-tokio = { version = "1.40.0", default-features = false, features = [
-    "fs",
-    "rt",
-] }
 url = { version = "2.5.2", optional = true }
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.40.0", default-features = false, features = [
-    "signal",
+  "net",
+  "rt",
 ] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.40.0", default-features = false, features = ["rt"] }
+wasm-bindgen-futures = "0.4.49"
+web-sys = "0.3.76"
+js-sys = "0.3.76"
+
+[dev-dependencies]
+tokio = { version = "1.40.0", default-features = false, features = ["signal"] }
 simple_logger = { version = "5.0.0", default-features = false, features = [
     "colors",
 ] }

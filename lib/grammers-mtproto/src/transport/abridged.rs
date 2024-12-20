@@ -110,6 +110,13 @@ impl Transport for Abridged {
         log::info!("resetting sending of header in abridged transport");
         self.init = false;
     }
+
+    fn obfuscated_tag(&mut self) -> &[u8; 4] {
+        self.init = true;
+        &[0xef, 0xef, 0xef, 0xef]
+    }
+
+    fn deobfuscate(&mut self, _buffer: &mut [u8]) {}
 }
 
 #[cfg(test)]

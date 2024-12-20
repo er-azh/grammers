@@ -17,6 +17,7 @@ edition = "2021"
 grammers-tl-types = { path = "../grammers-tl-types", version = "0.7.0" }
 grammers-crypto = { path = "../grammers-crypto", version = "0.7.0" }
 log = "0.4.22"
+instant = { version = "0.1.13", features = ["wasm-bindgen"] }
 
 [build-dependencies]
 grammers-tl-gen = { path = "../grammers-tl-gen", version = "0.7.0" }

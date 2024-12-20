@@ -36,10 +36,10 @@ use getrandom::getrandom;
 use grammers_crypto::hex;
 use grammers_crypto::{factorize::factorize, rsa, AuthKey};
 use grammers_tl_types::{self as tl, Cursor, Deserializable, RemoteCall, Serializable};
+use instant::SystemTime;
 use num_bigint::{BigUint, ToBigUint};
 use sha1::{Digest, Sha1};
 use std::fmt;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 // NOTE! Turning this on will leak the key generation process to stdout!
 // Should only be used for debugging purposes and generating test cases.
@@ -387,7 +387,7 @@ pub fn step3(data: Step2, response: &[u8]) -> Result<(Vec<u8>, Step3), Error> {
     }
 
     let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
+        .duration_since(SystemTime::UNIX_EPOCH)
         .expect("system time is before epoch")
         .as_secs() as i32;
 

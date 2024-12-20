@@ -14,11 +14,13 @@
 mod abridged;
 mod full;
 mod intermediate;
+mod obfuscated;
 
 pub use abridged::Abridged;
 pub use full::Full;
 use grammers_crypto::DequeBuffer;
 pub use intermediate::Intermediate;
+pub use obfuscated::Obfuscated;
 use std::fmt;
 
 /// The error type reported by the different transports when something is wrong.
@@ -95,4 +97,10 @@ pub trait Transport {
 
     /// Reset the state, as if a new instance was just created.
     fn reset(&mut self);
+
+    /// Returns the obfuscated transport tag.
+    fn obfuscated_tag(&mut self) -> &[u8; 4];
+
+    /// Decrypts the input buffer in-place.
+    fn deobfuscate(&mut self, buffer: &mut [u8]);
 }
